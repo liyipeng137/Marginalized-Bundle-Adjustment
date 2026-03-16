@@ -495,12 +495,13 @@ def resample(h5file_path, src_idx, cdf_bundle, cdf_function, connections, poses_
     return pts_src_s, pts_dst_s, depth_src_s, depth_dst_s, src_idx_s, dst_idx_s, incidence_src_s, incidence_dst_s
 
 class RandomCorrespondenceDepthSampler(torch.utils.data.Dataset):
-    def __init__(self, h5file_path, src_idx1, dst_idx2, marker_query_map, sample_num, min_corres_conf):
+    def __init__(self, h5file_path, src_idx1, dst_idx2, marker_query_map, sample_num, min_corres_conf, depth_source="marker"):
         self.h5pyreader = HDF5Reader(h5file_path)
         self.marker_query_map = marker_query_map
         self.sample_num = sample_num
         self.min_corres_conf = min_corres_conf
         self.src_idx1, self.dst_idx2 = src_idx1, dst_idx2
+        self.depth_source = depth_source
 
     def __len__(self):
         return len(self.src_idx1)
@@ -520,25 +521,45 @@ class RandomCorrespondenceDepthSampler(torch.utils.data.Dataset):
         coords_src_src2dst, coords_dst_src2dst, certainty_src2dst = h5pyreader.read_corres(pair_src2dst)
         coords_dst_dst2src, coords_src_dst2src, certainty_dst2src = h5pyreader.read_corres(pair_dst2src)
 
-        if self.marker_query_map[src_idx1] == 'qry':
+        depth_policy = self.depth_source
+        if depth_policy == "mixed":
+            depth_policy = "marker"
+
+        if depth_policy == "pr":
             depth_pr_src = h5pyreader.read_depth_pr(src_idx1_name)
-        elif self.marker_query_map[src_idx1] == 'map':
+            depth_pr_dst = h5pyreader.read_depth_pr(dst_idx2_name)
+        elif depth_policy == "gt":
             h, w = certainty_src2dst.shape
             depth_pr_src = h5pyreader.read_depth_gt(src_idx1_name)
             depth_pr_src_non_zero = cv2.resize((depth_pr_src > 0).astype(float), (w, h), interpolation=cv2.INTER_LINEAR)
             certainty_src2dst = (depth_pr_src_non_zero == 1.0).astype(float) * certainty_src2dst
-        else:
-            raise ValueError("Invalid marker query map for index {}.".format(src_idx1))
 
-        if self.marker_query_map[dst_idx2] == 'qry':
-            depth_pr_dst = h5pyreader.read_depth_pr(dst_idx2_name)
-        elif self.marker_query_map[dst_idx2] == 'map':
             h, w = certainty_dst2src.shape
             depth_pr_dst = h5pyreader.read_depth_gt(dst_idx2_name)
             depth_pr_dst_non_zero = cv2.resize((depth_pr_dst > 0).astype(float), (w, h), interpolation=cv2.INTER_LINEAR)
             certainty_dst2src = (depth_pr_dst_non_zero == 1.0).astype(float) * certainty_dst2src
+        elif depth_policy == "marker":
+            if self.marker_query_map[src_idx1] == 'qry':
+                depth_pr_src = h5pyreader.read_depth_pr(src_idx1_name)
+            elif self.marker_query_map[src_idx1] == 'map':
+                h, w = certainty_src2dst.shape
+                depth_pr_src = h5pyreader.read_depth_gt(src_idx1_name)
+                depth_pr_src_non_zero = cv2.resize((depth_pr_src > 0).astype(float), (w, h), interpolation=cv2.INTER_LINEAR)
+                certainty_src2dst = (depth_pr_src_non_zero == 1.0).astype(float) * certainty_src2dst
+            else:
+                raise ValueError("Invalid marker query map for index {}.".format(src_idx1))
+
+            if self.marker_query_map[dst_idx2] == 'qry':
+                depth_pr_dst = h5pyreader.read_depth_pr(dst_idx2_name)
+            elif self.marker_query_map[dst_idx2] == 'map':
+                h, w = certainty_dst2src.shape
+                depth_pr_dst = h5pyreader.read_depth_gt(dst_idx2_name)
+                depth_pr_dst_non_zero = cv2.resize((depth_pr_dst > 0).astype(float), (w, h), interpolation=cv2.INTER_LINEAR)
+                certainty_dst2src = (depth_pr_dst_non_zero == 1.0).astype(float) * certainty_dst2src
+            else:
+                raise ValueError("Invalid marker query map for index {}.".format(dst_idx2))
         else:
-            raise ValueError("Invalid marker query map for index {}.".format(dst_idx2))
+            raise ValueError("depth_source must be one of ['marker', 'mixed', 'pr', 'gt']")
 
         coords_src = np.concatenate([coords_src_src2dst, coords_src_dst2src], axis=0)
         coords_dst = np.concatenate([coords_dst_src2dst, coords_dst_dst2src], axis=0)
@@ -609,6 +630,7 @@ def random_sample_correspondence_depth(
         sample_num,
         min_corres_conf,
         device,
+        depth_source="marker",
 ):
     dataset = RandomCorrespondenceDepthSampler(
         h5file_path=h5path,
@@ -616,7 +638,8 @@ def random_sample_correspondence_depth(
         dst_idx2=[x[1] for x in connections],
         marker_query_map=marker_query_map,
         sample_num=sample_num,
-        min_corres_conf=min_corres_conf
+        min_corres_conf=min_corres_conf,
+        depth_source=depth_source,
     )
     dataloader = torch.utils.data.DataLoader(
         dataset,

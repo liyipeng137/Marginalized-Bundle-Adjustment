@@ -176,7 +176,8 @@ def bundle_adjustment(
         per_gpu_pair,
         params["sample_num"],
         min_corres_conf=params["min_corres_conf"],
-        device=device
+        device=device,
+        depth_source=params.get("depth_source", "marker"),
     )
     per_gpu_weight_on_pair_arr = [
         per_gpu_weight_on_pair_dict[tuple([int(src_idx1[i].item()), int(dst_idx2[i].item())])]
