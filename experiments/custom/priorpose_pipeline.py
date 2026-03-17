@@ -616,7 +616,7 @@ def parse_args():
     source_group.add_argument("--input-transforms-json", type=str, default=None, help="Input transforms.json (OpenGL c2w)")
     parser.add_argument("--output-location", type=str, default="/home/ubuntu/disk6/Marginalized-Bundle-Adjustment/release/custom")
     parser.add_argument("--output-transforms-json", type=str, default=None, help="Output optimized transforms.json path")
-    parser.add_argument("--depth-model", type=str, choices=["ZoeDepth", "UniDepth", "DUSt3R"], default="DUSt3R")
+    # parser.add_argument("--depth-model", type=str, choices=["ZoeDepth", "UniDepth", "DUSt3R"], default="DUSt3R")
     parser.add_argument("--corres-model", type=str, choices=["RoMa", "MASt3R"], default="RoMa")
     parser.add_argument("--depth-source", type=str, choices=["marker", "mixed", "pr", "gt"], default="gt")
     parser.add_argument("--min-confidence", type=float, default=0.2, help="Dense matcher confidence threshold")
@@ -639,7 +639,11 @@ def main():
     if available_gpus < 1:
         raise RuntimeError("No CUDA device found. This pipeline requires GPU for dense matching and BA.")
 
-    scene = "custom"
+    # Keep hdf5 scene naming consistent with corres preprocessing internals
+    # (inference_pairwise uses os.path.basename(data_root) as scene key).
+    scene = os.path.basename(os.path.normpath(args.data_root))
+    if scene == "":
+        raise ValueError(f"Cannot infer scene name from data_root: {args.data_root}")
     preprocess_location = os.path.join(args.output_location, f"{args.depth_model}_{args.corres_model}")
     dst_perscene = preprocess_location
     sfm_perscene = os.path.join(f"{preprocess_location}_sfm")

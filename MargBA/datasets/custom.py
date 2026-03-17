@@ -62,6 +62,11 @@ class CustomDataset(torch.utils.data.Dataset):
         rgb = numpy_image_to_torch(rgb)
         return rgb
 
+    def read_rgb_wo_resize(self, image_idx):
+        rgb_file = self.image_names[image_idx]
+        # Keep original HWC uint8 image for MASt3R correspondence inference.
+        return np.array(Image.open(rgb_file).convert("RGB"))
+
     def monodepth_getitem(self, idx: int) -> Dict[str, Any]:
         """
         Args:
@@ -91,10 +96,14 @@ class CustomDataset(torch.utils.data.Dataset):
         image_idx_src, image_idx_dst = self.image_indices_pair[idx]
         rgb_src = self.read_rgb(image_idx_src)
         rgb_dst = self.read_rgb(image_idx_dst)
+        rgb_src_wo_resize = self.read_rgb_wo_resize(image_idx_src)
+        rgb_dst_wo_resize = self.read_rgb_wo_resize(image_idx_dst)
 
         ret = {
             "rgb_src": rgb_src,
             "rgb_dst": rgb_dst,
+            "rgb_src_wo_resize": rgb_src_wo_resize,
+            "rgb_dst_wo_resize": rgb_dst_wo_resize,
             'image_idx_pair': [image_idx_src, image_idx_dst],
         }
         return ret
