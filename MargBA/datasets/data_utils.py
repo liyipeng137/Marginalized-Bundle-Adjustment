@@ -62,7 +62,7 @@ def resize(image: np.ndarray, size: List[int], fn: Callable[[List], float] = Non
         image = image.resize((w_new, h_new))
     return image, scale
 
-def initialize_dataset(data_root, dataset, mode, rank, world_size, output_location=None):
+def initialize_dataset(data_root, dataset, mode, rank, world_size, output_location=None, pairs_path=None):
     """
     Read RGB images and intrinsic. If GT poses and depths exist, read them for debug purpose.
     """
@@ -126,7 +126,8 @@ def initialize_dataset(data_root, dataset, mode, rank, world_size, output_locati
             data_root=data_root,
             mode=mode,
             rank=rank,
-            world_size=world_size
+            world_size=world_size,
+            pairs_path=pairs_path,
         )
         return custom
     elif dataset == "fastmap_sfm":

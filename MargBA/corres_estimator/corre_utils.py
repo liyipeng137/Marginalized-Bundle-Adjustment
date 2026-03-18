@@ -213,7 +213,8 @@ def inference_pairwise_per_gpu(
         dataset,
         output_location,
         corres_method_name,
-        min_confidence=0.25, min_visibility=0.15
+        min_confidence=0.25, min_visibility=0.15,
+        pairs_path=None,
 ):
     from MargBA.datasets import initialize_dataset, to_cuda
     torch.cuda.set_device(rank)
@@ -223,7 +224,8 @@ def inference_pairwise_per_gpu(
         output_location=output_location,
         mode='correspondence',
         rank=rank,
-        world_size=world_size
+        world_size=world_size,
+        pairs_path=pairs_path,
     )
     dataloader = DataLoader(
         dataset,
@@ -388,7 +390,8 @@ def inference_pairwise(
         dataset,
         output_location,
         corres_method_name,
-        min_confidence=0.25, min_visibility=0.15
+        min_confidence=0.25, min_visibility=0.15,
+        pairs_path=None,
 ):
     world_size = torch.cuda.device_count()
     mp.spawn(
@@ -400,7 +403,8 @@ def inference_pairwise(
             output_location,
             corres_method_name,
             min_confidence,
-            min_visibility
+            min_visibility,
+            pairs_path,
         ),
         nprocs=world_size,
         join=True

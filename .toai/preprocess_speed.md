@@ -312,11 +312,16 @@
 9. 已在 `experiments/custom/priorpose_pipeline.py` 中开放 `--corres-model MASt3RFast`。
 10. 已修复 `experiments/custom/preprocess.py` 里 `--corres-model` 参数存在但内部仍硬编码 `RoMa` 的问题。
 11. 已同步放开其他实验脚本中的 `corres-model` 枚举，并修复多份 `preprocess.py` 内部硬编码 `RoMa` 的问题。
+12. 已在 `experiments/custom/priorpose_pipeline.py` 中新增基于 prior pose 的 `selected_pairs` 生成逻辑，参数先采用 `demosc/pairfrompose.py` 中的默认值。
+13. 已在 preprocess 阶段将 `selected_pairs` 写为 `selected_pairs.txt`，并只对这些 pair 运行 matcher。
+14. 已为 custom correspondence 数据入口新增 `pairs_path` 支持，给定该文件时会跳过原来的全连接 `i < j` pair 枚举。
 
 ### 待验证
 1. 用户侧运行 `MASt3RFast` preprocess，确认能成功导出 `corres_i2j/visibility_i2j` 和 hdf5。
 2. 用户侧验证与 `RoMa` / 慢版 `MASt3R` 相比的 preprocess 用时变化。
 3. 用户侧验证 `MASt3RFast` 产出的 correspondence 是否足以支撑 coarse/fine BA 正常收敛。
+4. 用户侧验证引入 pose-based pair pruning 后，selected pair 数量是否显著低于全连接 pair 数。
+5. 用户侧验证在 `RoMa` 下仅做 pair pruning 是否已经能带来主要速度收益。
 
 ### 下一步建议
 1. 用一个小场景先跑 `priorpose_pipeline.py --corres-model MASt3RFast`。
@@ -326,3 +331,100 @@
    3. `mast3r_fast.py` 内部的 `subsample`
    4. `match_conf_thr`
 3. 如果速度仍不够，再进入 pair pruning 阶段。
+
+当前状态更新：
+
+1. pair pruning 阶段已经落地，不再是规划项。
+2. 当前最关键的实测不是“MASt3RFast 本身还能否再调快”，而是“pose-based pair pruning 之后，`RoMa`/`MASt3RFast` 的总 preprocess 时间分别是多少”。
+
+---
+
+## 11. 新方向：基于 prior pose 先筛 pair
+
+### 11.1 背景判断
+在进一步分析后，单纯替换 matcher 不是最有希望把 preprocess 从约 30 分钟压到约 2 分钟的主因。
+
+更可能决定总时长的是：
+
+1. 当前 custom correspondence 仍然是全连接 `O(N^2)` pair 枚举
+2. 即使单个 pair 更快，总 pair 数不降，总时长仍然会被拖住
+
+因此更合理的主线应当是：
+
+1. 先用 prior pose 构建稀疏候选图
+2. preprocess 只在候选 pair 上运行 matcher
+
+### 11.2 参考脚本
+参考脚本：`demosc/pairfrompose.py`
+
+核心函数：`pairs_from_poses(...)`
+
+它的策略是：
+
+1. 先按图像顺序添加时序窗口内的 pair（`overlap`）
+2. 再根据位姿接近程度补少量 loop closure pair
+3. 丢掉在旋转和位移上都“过近”的 pair
+
+这一策略非常适合作为当前 `priorpose_pipeline.py` 的 preprocess 前置筛边步骤。
+
+### 11.3 可行性结论
+结论：高度可行，而且比继续深挖 `MASt3RFast` 更值得优先实现。
+
+原因：
+
+1. `priorpose_pipeline.py` 本来就已经拿到了 prior pose
+2. 这些 prior pose 已经被整理成 payload，包含每帧索引、文件名、内参、`w2c`
+3. 用 payload 中的 pose 构建 pair 候选图不依赖 BA 主体
+4. 一旦 pair 从全连接变成稀疏图，任何 matcher 的总耗时都会立刻下降
+
+### 11.4 与当前项目的接口差异
+当前项目里真正需要改的，不是 BA，而是 preprocess 数据入口。
+
+现在的 custom 流程问题在于：
+
+1. `MargBA/datasets/custom.py` 中 `init_image_indices_pairwise()` 会直接生成所有 `i < j`
+2. `inference_pairwise_per_gpu(...)` 再按这个全集合去跑 matcher
+
+所以如果要接入 pose-based pairs，需要新增一种“只跑指定 pair 集合”的入口。
+
+推荐实现方式：
+
+1. 在 `priorpose_pipeline.py` 中，根据 payload 的 prior pose 先生成 `selected_pairs`
+2. 将 `selected_pairs` 写成文本文件或直接传入 preprocess
+3. 让 custom dataset / `inference_pairwise(...)` 支持“从给定 pairs 读取”，而不是默认全连接
+
+### 11.5 对两类 prior 输入的兼容性
+这个思路不仅适用于 COLMAP prior，也适用于 `transforms.json` prior。
+
+因为真正需要的只是：
+
+1. 每帧稳定索引
+2. 每帧相机中心 / 旋转
+
+而这两类输入在当前 `priorpose_pipeline.py` 里都已经能解析成统一 payload。
+
+因此建议不要硬绑定到 `COLMAP images dict`。
+更好的做法是：
+
+1. 把 `pairs_from_poses` 的思路抽象出来
+2. 基于当前 payload 中的 `w2c` 直接计算 pair
+
+这样可以统一支持：
+
+1. `--prior-pose-colmap-model`
+2. `--input-transforms-json`
+
+### 11.6 风险与注意事项
+1. `demosc/pairfrompose.py` 当前是按图像 id 顺序构建 sequential window，这在当前项目里需要映射到 payload 的 `idx` 顺序。
+2. loop closure 的阈值（旋转/平移）需要暴露成参数，否则不同场景差异会比较大。
+3. 如果 pair 图过稀，可能会影响 BA 图连通性，所以需要做连通性 sanity check。
+4. 这条路线和 `MASt3RFast` 不冲突，二者可以叠加：
+   1. 先用 prior pose 筛 pair
+   2. 再在筛后的少量 pair 上跑 `RoMa` 或 `MASt3RFast`
+
+### 11.7 当前推荐优先级
+当前推荐优先级调整为：
+
+1. 第一优先级：实现基于 prior pose 的 pair pruning
+2. 第二优先级：在筛后的 pair 上选择 matcher
+3. 第三优先级：再决定是否继续保留 `MASt3RFast`

@@ -408,6 +408,87 @@ def prepare_hdf5_and_mapper(dst_perscene: str, scene: str, payload: List[Dict], 
     return h5path
 
 
+def build_pairs_from_prior_poses(
+    payload: List[Dict],
+    overlap: int = 5,
+    loop_Rt_thresh: Tuple[float, float] = (30.0, 2.0),
+    near_Rt_min_thresh: Tuple[float, float] = (1.0, 0.05),
+    max_loops_per_image: int = 5,
+):
+    payload_sorted = sorted(payload, key=lambda x: x["idx"])
+    if len(payload_sorted) == 0:
+        return []
+
+    poses_w2c = np.stack([x["w2c"] for x in payload_sorted], axis=0).astype(np.float32)
+    indices = [int(x["idx"]) for x in payload_sorted]
+
+    R_w2c = poses_w2c[:, :3, :3]
+    t_w2c = poses_w2c[:, :3, 3]
+    R_c2w = np.transpose(R_w2c, (0, 2, 1))
+    t_c2w = -(R_c2w @ t_w2c[:, :, None])[:, :, 0]
+
+    R_loop_max, t_loop_max = loop_Rt_thresh
+    R_near_min, t_near_min = near_Rt_min_thresh
+
+    dt = t_c2w @ t_c2w.T
+    dt *= -2
+    sq = np.einsum("ij,ij->i", t_c2w, t_c2w)
+    dt += sq[:, None]
+    dt += sq[None]
+    np.clip(dt, 0, None, out=dt)
+    np.sqrt(dt, out=dt)
+
+    trace = np.einsum("nji,mji->nm", R_c2w, R_c2w, optimize=True)
+    dR = np.clip((trace - 1.0) / 2.0, -1.0, 1.0)
+    dR = np.rad2deg(np.abs(np.arccos(dR)))
+
+    pairs = []
+    added = set()
+    nfrm = len(indices)
+
+    for i in range(nfrm - 1):
+        for j in range(i + 1, min(i + overlap + 1, nfrm)):
+            if dR[i, j] < R_near_min and dt[i, j] < t_near_min:
+                continue
+            key = (indices[i], indices[j])
+            if key not in added:
+                pairs.append(key)
+                added.add(key)
+
+    for i in range(nfrm):
+        start = i + overlap + 1
+        if start >= nfrm:
+            continue
+        cand_idx = np.arange(start, nfrm)
+        valid = (dR[i, cand_idx] < R_loop_max) & (dt[i, cand_idx] < t_loop_max)
+        not_too_near = ~((dR[i, cand_idx] < R_near_min) & (dt[i, cand_idx] < t_near_min))
+        valid &= not_too_near
+        if not np.any(valid):
+            continue
+
+        vc = cand_idx[valid]
+        order = np.lexsort((dR[i, vc], dt[i, vc]))
+        vc = vc[order][:max_loops_per_image]
+
+        for j in vc:
+            key = (indices[i], indices[j])
+            if key not in added:
+                pairs.append(key)
+                added.add(key)
+
+    if len(pairs) == 0:
+        raise RuntimeError("No valid pose-based pairs were generated from prior poses.")
+    return pairs
+
+
+def write_selected_pairs(dst_perscene: str, pairs: List[Tuple[int, int]]) -> str:
+    pairs_path = os.path.join(dst_perscene, "selected_pairs.txt")
+    with open(pairs_path, "w") as f:
+        for idx1, idx2 in pairs:
+            f.write(f"{idx1} {idx2}\n")
+    return pairs_path
+
+
 def ensure_required_groups(h5path: str):
     required_groups = ["rgb", "corres_i2j", "visibility_i2j", "intrinsic_gt", "depth_gt"]
     with h5py.File(h5path, "r") as f:
@@ -682,6 +763,11 @@ def main():
             if os.path.exists(os.path.join(dst_perscene, "vls")):
                 shutil.rmtree(os.path.join(dst_perscene, "vls"))
         h5path = prepare_hdf5_and_mapper(dst_perscene=dst_perscene, scene=scene, payload=payload, overwrite=args.overwrite)
+        selected_pairs = build_pairs_from_prior_poses(payload=payload)
+        pairs_path = write_selected_pairs(dst_perscene=dst_perscene, pairs=selected_pairs)
+        full_pair_count = len(payload) * (len(payload) - 1) // 2
+        print(f"Selected pose-based pairs: {len(selected_pairs)} / {full_pair_count}")
+        print(f"Pairs file: {pairs_path}")
         inference_pairwise(
             data_root=data_root,
             dataset="custom",
@@ -689,6 +775,7 @@ def main():
             corres_method_name=args.corres_model,
             min_confidence=args.min_confidence,
             min_visibility=args.min_visibility,
+            pairs_path=pairs_path,
         )
     else:
         if not os.path.exists(h5path):

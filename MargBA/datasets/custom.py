@@ -3,11 +3,11 @@ import numpy as np
 import torch
 
 from PIL import Image
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from MargBA.datasets.data_utils import numpy_image_to_torch, resize
 
 class CustomDataset(torch.utils.data.Dataset):
-    def __init__(self, data_root, mode, rank, world_size):
+    def __init__(self, data_root, mode, rank, world_size, pairs_path: Optional[str] = None):
         """
         scene: ScanNet Test Scene Name
         mode: Dataset for monocular depth estimation or pair-wise correspondence estimation
@@ -17,7 +17,7 @@ class CustomDataset(torch.utils.data.Dataset):
         assert mode in ['monodepth', 'correspondence']
 
         # Init pair-wise indices
-        self.init_image_indices_pairwise()
+        self.init_image_indices_pairwise(pairs_path=pairs_path)
 
         # Down sample
         self.image_indices = self.image_indices[rank::world_size]
@@ -31,8 +31,20 @@ class CustomDataset(torch.utils.data.Dataset):
         image_indices = list(range(len(image_names)))
         return image_indices, image_names
 
-    def init_image_indices_pairwise(self):
+    def init_image_indices_pairwise(self, pairs_path: Optional[str] = None):
         self.image_indices_pair = list()
+        if pairs_path is not None:
+            if not os.path.exists(pairs_path):
+                raise FileNotFoundError(f"Pairs file not found: {pairs_path}")
+            with open(pairs_path, "r") as f:
+                lines = [line.strip() for line in f.readlines() if line.strip()]
+            for line in lines:
+                src_idx, dst_idx = line.split()
+                src_idx, dst_idx = int(src_idx), int(dst_idx)
+                if src_idx >= dst_idx:
+                    raise ValueError(f"Pairs file expects src_idx < dst_idx, got: {line}")
+                self.image_indices_pair.append([src_idx, dst_idx])
+            return
         for i in self.image_indices:
             for j in self.image_indices:
                 if i < j:
