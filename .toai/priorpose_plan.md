@@ -105,3 +105,80 @@
 3. 已完成：输入源扩展，`priorpose_pipeline` 已支持 `--prior-pose-colmap-model` 和 `--input-transforms-json` 二选一。
 4. 已完成：输出源扩展，BA 结束后自动导出 `optimized_transforms.json`（包含优化后外参 + `adjust_intrinsic` 后内参）。
 5. 进行中：远程环境端到端验证（由用户执行），重点检查坐标系和文件映射一致性。
+
+## 10. 预处理（默认 RoMA）在做什么、为了产出什么
+1. 目标：为 BA 构建“跨帧2D稠密对应 + 可见性权重”数据，供后续随机采样和重投影残差优化使用。
+2. 入口：`priorpose_pipeline.py` 在预处理阶段调用 `inference_pairwise(...)`，默认对应模型可选 `RoMa|MASt3R`。
+3. RoMA 对每个图像对的核心计算：
+   1. 双向匹配：计算 `src->dst` 与 `dst->src` 两个方向的 dense warp + certainty。
+   2. 置信度筛选：低于 `min_confidence` 的匹配置零。
+   3. 前后向一致性检查（cyclic check）：过滤几何不一致匹配。
+   4. 可见性计算：根据双向有效像素占比得到 pair 级 `visibility`。
+   5. pair 过滤：若 `visibility < min_visibility` 或有效匹配为空，则该 pair 不写入产物。
+4. 中间产物（磁盘）：
+   1. `intermediate/corres_i2j/<pair>/`：每个方向写三张 png（`x/y/conf`）。
+   2. `intermediate/visibility_i2j/<pair>.txt`：pair 可见性。
+   3. 若数据集提供 GT 相对位姿，也会写 `intermediate/pose_i2j_gt/`（custom 常规无此项）。
+5. 合并后产物（HDF5）：
+   1. `corres_i2j`：用于 BA 采样对应点。
+   2. `visibility_i2j`：用于连接权重和子图构建。
+   3. priorpose 流程另外保留 `rgb/depth_gt/depth_pr/intrinsic_gt/pose_w2c_gt`，一起组成 BA 输入。
+6. 与 depth-model 的关系说明：
+   1. 默认 custom 原流程里，`depth-model` 负责生成 `depth_pr`，会被 BA 使用。
+   2. 当前 priorpose 流程里，我们直接写入 LiDAR depth 到 `depth_gt/depth_pr`，预处理阶段不再依赖 `inference_unary`，因此 `depth-model` 主要影响输出目录命名与实验隔离。
+7. 计算复杂度与耗时来源（加速重点）：
+   1. pair 数量近似 `O(N^2)`，这是最主要开销来源。
+   2. 每个 pair 需要双向推理与一致性检查，GPU 时间与显存占用高。
+   3. 大量 PNG/TXT 落盘和再合并到 HDF5，I/O 开销显著。
+8. 后续预处理加速抓手（按优先级）：
+   1. 减少 pair 数：只保留时序邻近窗口或基于先验位姿筛选候选边，避免全连接。
+   2. 复用已有结果：支持 `--skip-preprocess`，并保证 scene 命名一致，避免重复推理。
+   3. 降低匹配分辨率或提高阈值：调 `min_confidence/min_visibility`，减少无效 pair 写盘。
+   4. 关闭/延后可视化：`vls` 仅做抽样调试，正式批跑可禁用。
+   5. I/O 优化：减少中间文件落地次数，或改为直接写入 HDF5（需要额外改造）。
+
+## 11. `priorpose_pipeline.py` 当前流程分阶段梳理
+1. 参数与路径规范化阶段：
+   1. 解析 CLI 参数，检查 GPU 可用性。
+   2. 对 `data_root/depth_root` 做 `normpath`，统一 scene 命名，避免路径尾 `/` 导致的错名 hdf5。
+2. 先验输入解析阶段：
+   1. 二选一读取先验：`COLMAP model` 或 `input_transforms.json`。
+   2. 将每帧 RGB、depth、K、w2c 对齐成 payload。
+3. 数据契约检查阶段：
+   1. 检查 RGB/先验/depth 一一对应。
+   2. 若缺失或不一致，fail-fast 退出。
+4. HDF5 准备阶段：
+   1. 写入 `rgb/depth_gt/depth_pr/intrinsic_gt/pose_w2c_gt`。
+   2. 写入 `mapper.txt`（索引到文件名映射）。
+5. 稠密匹配预处理阶段（可跳过）：
+   1. 调 `inference_pairwise` 生成 `corres_i2j/visibility_i2j`。
+   2. `--skip-preprocess` 时复用已有 hdf5 对应组。
+6. 初始化位姿模型阶段：
+   1. 用 payload 中先验位姿构建并保存 `pr_pose_model_init.ckpt`。
+7. BA 优化阶段：
+   1. 读取 hdf5 与初始化 ckpt。
+   2. 执行 coarse + fine 两阶段 BA，输出 `pr_pose_model_coarse.ckpt` 与 `pr_pose_model_fine.ckpt`。
+8. 结果导出阶段：
+   1. 加载 fine ckpt。
+   2. 导出优化后的 `transforms.json`（含优化后外参与 `adjust_intrinsic` 后内参）。
+
+## 12. coarse 和 fine 两阶段BA的目的
+   1. coarse：先把“全局几何结构”拉到合理位置
+      1. 用更鲁棒的 cdf_log_subgraph（对大残差不敏感，先稳住整体）
+      2. 用按节点度数组织的 pair 分配，强调图连通和全局一致性
+      3. 内参相关学习率更激进（lr_intrinsic_boost=50）
+      4. 从 pr_pose_model_init.ckpt 开始优化
+      参考：
+         priorpose_pipeline.py (line 550)
+         priorpose_pipeline.py (line 572)
+         bundle_adjustment.py (line 47)
+   2. fine：在 coarse 基础上做“精细收敛”
+      1. 换成 cdf_log + cdf_euclidean，先稳再追像素级精度
+      2. pair 分配更接近全量均匀覆盖
+      3. 内参学习率降低（lr_intrinsic_boost=10）
+      4. 从 pr_pose_model_coarse.ckpt 接着优化
+      参考：
+         priorpose_pipeline.py (line 579)
+         priorpose_pipeline.py (line 601)
+         bundle_adjustment.py (line 53)
+   总结：coarse 解决“别跑飞、先对齐”，fine 解决“再抠细节、压低残差”。

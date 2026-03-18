@@ -569,7 +569,7 @@ def run_ba(
             "lr_intrinsic_boost": 50,
             "sample_num": sample_num,
             "losses": {
-                "cdf_log_subgraph": {"maxpx": 15.0, "bins": 250, "gradient_smooth": 2, "iterations": 50000}
+                "cdf_log_subgraph": {"maxpx": 15.0, "bins": 250, "gradient_smooth": 2, "iterations": 5000}
             },
             "master_port": find_free_port(12362, 12962),
         }
@@ -598,8 +598,8 @@ def run_ba(
             "gradient_mask": gradient_mask,
             "lr_intrinsic_boost": 10,
             "losses": {
-                "cdf_log": {"maxpx": 15.0, "bins": 250, "gradient_smooth": 2, "iterations": 10000},
-                "cdf_euclidean": {"maxpx": 50.0, "bins": 600, "gradient_smooth": 3, "iterations": 10000},
+                "cdf_log": {"maxpx": 15.0, "bins": 250, "gradient_smooth": 2, "iterations": 5000},
+                "cdf_euclidean": {"maxpx": 50.0, "bins": 600, "gradient_smooth": 3, "iterations": 5000},
             },
             "master_port": find_free_port(13000, 13600),
         }
@@ -628,8 +628,8 @@ def parse_args():
     parser.add_argument("--calibrated", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--per-gpu-ram", type=float, default=32.0)
-    parser.add_argument("--maxpair", type=float, default=np.inf)
-    parser.add_argument("--max-sample-num", type=int, default=10000)
+    parser.add_argument("--maxpair", type=float, default=4000)
+    parser.add_argument("--max-sample-num", type=int, default=5000)
     return parser.parse_args()
 
 
@@ -639,25 +639,28 @@ def main():
     if available_gpus < 1:
         raise RuntimeError("No CUDA device found. This pipeline requires GPU for dense matching and BA.")
 
+    data_root = os.path.normpath(args.data_root)
+    depth_root = os.path.normpath(args.depth_root)
+
     # Keep hdf5 scene naming consistent with corres preprocessing internals
     # (inference_pairwise uses os.path.basename(data_root) as scene key).
-    scene = os.path.basename(os.path.normpath(args.data_root))
+    scene = os.path.basename(data_root)
     if scene == "":
         raise ValueError(f"Cannot infer scene name from data_root: {args.data_root}")
-    preprocess_location = os.path.join(args.output_location, f"{args.depth_model}_{args.corres_model}")
+    preprocess_location = os.path.join(args.output_location, f"{args.corres_model}")
     dst_perscene = preprocess_location
     sfm_perscene = os.path.join(f"{preprocess_location}_sfm")
     os.makedirs(dst_perscene, exist_ok=True)
     os.makedirs(sfm_perscene, exist_ok=True)
 
-    rgb_paths = collect_rgb_paths(args.data_root)
+    rgb_paths = collect_rgb_paths(data_root)
     if args.prior_pose_colmap_model is not None:
         colmap_ext = detect_colmap_ext(args.prior_pose_colmap_model)
         cameras, images, _ = read_model(args.prior_pose_colmap_model, colmap_ext)
         payload, report = build_payload_from_colmap(
             rgb_paths=rgb_paths,
-            data_root=args.data_root,
-            depth_root=args.depth_root,
+            data_root=data_root,
+            depth_root=depth_root,
             cameras=cameras,
             images=images,
         )
@@ -665,8 +668,8 @@ def main():
     else:
         payload, report = build_payload_from_transforms(
             rgb_paths=rgb_paths,
-            data_root=args.data_root,
-            depth_root=args.depth_root,
+            data_root=data_root,
+            depth_root=depth_root,
             transforms_json_path=args.input_transforms_json,
         )
         fail_fast_report(report, prior_source_name="transforms")
@@ -680,7 +683,7 @@ def main():
                 shutil.rmtree(os.path.join(dst_perscene, "vls"))
         h5path = prepare_hdf5_and_mapper(dst_perscene=dst_perscene, scene=scene, payload=payload, overwrite=args.overwrite)
         inference_pairwise(
-            data_root=args.data_root,
+            data_root=data_root,
             dataset="custom",
             output_location=dst_perscene,
             corres_method_name=args.corres_model,
@@ -716,7 +719,7 @@ def main():
         unique_nodes.add(int(i2))
     world_size = min(available_gpus, max(1, len(connections)), max(1, len(unique_nodes)))
     params_base = {
-        "data_root": args.data_root,
+        "data_root": data_root,
         "lr": args.lr,
         "log_freq": 500,
         "max_pair_residual": 40,

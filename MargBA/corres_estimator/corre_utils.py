@@ -402,7 +402,9 @@ def inference_pairwise(
         nprocs=world_size,
         join=True
     )
-    scene = os.path.basename(data_root)
+    scene = os.path.basename(os.path.normpath(data_root))
+    if scene == "":
+        raise ValueError(f"Cannot infer scene name from data_root: {data_root}")
     write_to_hdf5(
         scene,
         output_location
