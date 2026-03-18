@@ -118,7 +118,7 @@ def main():
     parser.add_argument(
         '--corres-model',
         type=str,
-        choices=['RoMa', 'MASt3R'],
+        choices=['RoMa', 'MASt3R', 'MASt3RFast'],
         default='RoMa'
     )
     args = parser.parse_args()

@@ -42,7 +42,7 @@ if __name__ == "__main__":
     parser.add_argument(
         '--corres-model',
         type=str,
-        choices=['RoMa', 'MASt3R'],
+        choices=['RoMa', 'MASt3R', 'MASt3RFast'],
         default='RoMa',
         help='Correspondence estimation model to use'
     )

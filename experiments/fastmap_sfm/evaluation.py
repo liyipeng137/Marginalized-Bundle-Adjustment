@@ -389,7 +389,7 @@ def main():
         '--depth-model', type=str, choices=['ZoeDepth', 'UniDepth', 'DUSt3R'], default='DUSt3R'
     )
     parser.add_argument(
-        '--corres-model', type=str, choices=['RoMa', 'MASt3R'], default='RoMa'
+        '--corres-model', type=str, choices=['RoMa', 'MASt3R', 'MASt3RFast'], default='RoMa'
     )
 
     args = parser.parse_args()

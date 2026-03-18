@@ -114,7 +114,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         '--corres-model',
         type=str,
-        choices=['RoMa', 'MASt3R'],
+        choices=['RoMa', 'MASt3R', 'MASt3RFast'],
         default='RoMa',
         help='Correspondence model'
     )

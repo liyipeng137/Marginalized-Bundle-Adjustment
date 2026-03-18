@@ -387,7 +387,7 @@ def main():
         help='Depth model used for SfM'
     )
     parser.add_argument(
-        '--corres-model', type=str, choices=['RoMa', 'MASt3R'], 
+        '--corres-model', type=str, choices=['RoMa', 'MASt3R', 'MASt3RFast'], 
         default='RoMa',
         help='Correspondence model used for SfM'
     )

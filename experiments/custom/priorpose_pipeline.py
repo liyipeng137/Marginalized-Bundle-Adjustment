@@ -617,7 +617,7 @@ def parse_args():
     parser.add_argument("--output-location", type=str, default="/home/ubuntu/disk6/Marginalized-Bundle-Adjustment/release/custom")
     parser.add_argument("--output-transforms-json", type=str, default=None, help="Output optimized transforms.json path")
     # parser.add_argument("--depth-model", type=str, choices=["ZoeDepth", "UniDepth", "DUSt3R"], default="DUSt3R")
-    parser.add_argument("--corres-model", type=str, choices=["RoMa", "MASt3R"], default="RoMa")
+    parser.add_argument("--corres-model", type=str, choices=["RoMa", "MASt3R", "MASt3RFast"], default="RoMa")
     parser.add_argument("--depth-source", type=str, choices=["marker", "mixed", "pr", "gt"], default="gt")
     parser.add_argument("--min-confidence", type=float, default=0.2, help="Dense matcher confidence threshold")
     parser.add_argument("--min-visibility", type=float, default=0.1, help="Dense matcher visibility threshold")

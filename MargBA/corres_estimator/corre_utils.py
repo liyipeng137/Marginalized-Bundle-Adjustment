@@ -27,14 +27,17 @@ def compute_visibility(valid_src_dst, valid_dst_src):
     return visibility
 
 def init_corres_model(corres_method_name, min_confidence=0.25, min_visibility=0.15):
-    supported_methods = ['RoMa', 'MASt3R']
+    supported_methods = ['RoMa', 'MASt3R', 'MASt3RFast']
     assert corres_method_name in supported_methods
     if corres_method_name == 'RoMa':
-        from MargBA.corres_estimator import RoMa
+        from .roma import RoMa
         coores_model = RoMa(min_confidence=min_confidence, min_visibility=min_visibility)
     elif corres_method_name == 'MASt3R':
-        from MargBA.corres_estimator import MASt3R
+        from .mast3r import MASt3R
         coores_model = MASt3R(min_confidence=min_confidence, min_visibility=min_visibility)
+    elif corres_method_name == 'MASt3RFast':
+        from .mast3r_fast import MASt3RFast
+        coores_model = MASt3RFast(min_confidence=min_confidence, min_visibility=min_visibility)
     return coores_model
 
 def cvt2ncoordinates(torch_coords, intrinsic, h, w):

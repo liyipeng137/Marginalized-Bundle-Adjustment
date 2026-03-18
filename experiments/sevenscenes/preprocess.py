@@ -35,7 +35,7 @@ if __name__ == "__main__":
     parser.add_argument(
         '--corres-model',
         type=str,
-        choices=['RoMa', 'MASt3R'],
+        choices=['RoMa', 'MASt3R', 'MASt3RFast'],
         default='RoMa',
         help='Correspondence estimation model to use'
     )
@@ -79,5 +79,5 @@ if __name__ == "__main__":
             data_root=src_perscene,
             dataset="7scenes",
             output_location=dst_perscene,
-            corres_method_name="RoMa"
+            corres_method_name=args.corres_model
         )

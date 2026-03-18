@@ -163,7 +163,7 @@ def main() -> None:
     parser.add_argument('--data-root', type=str, default="/home/ubuntu/disk6/Marginalized-Bundle-Adjustment-Datasets/scannet")
     parser.add_argument('--output-location', type=str, default="/home/ubuntu/disk6/Marginalized-Bundle-Adjustment/release/scannet")
     parser.add_argument('--depth-model', type=str, choices=['ZoeDepth', 'UniDepth', 'DUSt3R'], default='DUSt3R')
-    parser.add_argument('--corres-model', type=str, choices=['RoMa', 'MASt3R'], default='RoMa')
+    parser.add_argument('--corres-model', type=str, choices=['RoMa', 'MASt3R', 'MASt3RFast'], default='RoMa')
     parser.add_argument('--calibrated', action="store_true")
 
     config = EvaluationConfig(**vars(parser.parse_args()))
